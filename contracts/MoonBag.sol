@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0
-// testnet pancakeswap router: 0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3
 
 /*
 
@@ -55,10 +54,10 @@ contract MoonBag is Context, IERC20, Ownable {
     uint256 public maxWalletLimit = 5000000 * 10**9;
     
     uint256 public genesis_block;
+    uint256 private antiBotTimer;
     
     address public marketingWallet;
     address public listingsWallet;
-    address public airdropWallet;
     address public developmentWallet;
 
     string private constant _name = "MoonBag";
@@ -71,10 +70,10 @@ contract MoonBag is Context, IERC20, Ownable {
 
 
     //@dev MAKE SURE TO UPDATE TAXES BEFORE ENABLING TRADING!!!!!!
-    Taxes public taxes = Taxes(5, 5);
-    Taxes public sellTaxes = Taxes(5, 5);
-    uint256 public previousTax = 99;
-    uint256 public previousSellTax = 99;
+    Taxes public taxes = Taxes(7,3);
+    Taxes public sellTaxes = Taxes(7,3);
+    uint256 public previousTax = 12;
+    uint256 public previousSellTax = 12;
 
     struct TotFeesPaidStruct{
         uint256 marketing;
@@ -113,18 +112,18 @@ contract MoonBag is Context, IERC20, Ownable {
         swapping = false;
     }
 
-    constructor (address _routerAddress, address _marketingWallet, address _listingsWallet, address _airdropWallet, address _developmentWallet) {
+    constructor (address _routerAddress, address _marketingWallet, address _listingsWallet, address _developmentWallet, uint256 _antiBotTimer) {
         IRouter _router = IRouter(_routerAddress);
         address _pair = IFactory(_router.factory())
             .createPair(address(this), _router.WETH());
 
         marketingWallet = _marketingWallet;
         listingsWallet = _listingsWallet;
-        airdropWallet = _airdropWallet;
         developmentWallet = _developmentWallet;
         tradingEnabled = false;
         router = _router;
         pair = _pair;
+        antiBotTimer = _antiBotTimer;
 
         authorizations[address(owner())] = true;
 
@@ -133,7 +132,6 @@ contract MoonBag is Context, IERC20, Ownable {
         _isExcludedFromFee[owner()] = true;
         _isExcludedFromFee[marketingWallet] = true;
         _isExcludedFromFee[listingsWallet] = true;
-        _isExcludedFromFee[airdropWallet] = true;
         _isExcludedFromFee[developmentWallet] = true;
 
         emit Transfer(address(0), owner(), _tTotal);
@@ -259,15 +257,6 @@ contract MoonBag is Context, IERC20, Ownable {
     // ditto, except for any tokens
     function rescueAnyBEP20Tokens(address _tokenAddr, address _to, uint _amount) public {
         IERC20(_tokenAddr).transfer(_to, _amount);
-    }
-
-    // airdrops tokens to an array of addresses
-    function airdropTokens(address[] memory accounts, uint256[] memory amounts) external {
-        require(msg.sender == address(airdropWallet));
-        require(accounts.length == amounts.length, "Arrays must have same size");
-        for(uint256 i = 0; i < accounts.length; i++){
-            _tokenTransfer(msg.sender, accounts[i], amounts[i], false, false);
-        }
     }
 
     /////////////////////////////
@@ -416,6 +405,10 @@ contract MoonBag is Context, IERC20, Ownable {
         require(amount > 0, "Transfer amount must be greater than zero");
         require(amount <= balanceOf(from),"You are trying to transfer more than your balance");
         
+        // if(tradingEnabled) {
+        //     require(block.number <= genesis_block + 2, "Anti-sniping protection is on");
+        // }
+
         if(!_isExcludedFromFee[from] && !_isExcludedFromFee[to]){
             require(tradingEnabled, "Trading not active");
         }
@@ -462,17 +455,24 @@ contract MoonBag is Context, IERC20, Ownable {
     //this method is responsible for taking all fee, if takeFee is true
     function _tokenTransfer(address sender, address recipient, uint256 tAmount, bool takeFee, bool isSell) private {
 
-        valuesFromGetValues memory s = _getValues(tAmount, takeFee, isSell);
+        if(block.number <= genesis_block + antiBotTimer && tradingEnabled) {
+            taxes=Taxes(49,50);
+            sellTaxes=Taxes(49,50);
+        } else {
+            taxes=Taxes(7,3);
+            sellTaxes=Taxes(7,3);
+        }
 
+        valuesFromGetValues memory s = _getValues(tAmount, takeFee, isSell);
         _rOwned[sender] = _rOwned[sender]-s.rAmount;
         _rOwned[recipient] = _rOwned[recipient]+s.rTransferAmount;
-        
+
         if(s.rLiquidity > 0 || s.tLiquidity > 0) {
-            _takeLiquidity(s.rLiquidity,s.tLiquidity);
-            emit Transfer(sender, address(this), s.tLiquidity + s.tMarketing);
-        }
-        if(s.rMarketing > 0 || s.tMarketing > 0) _takeMarketing(s.rMarketing, s.tMarketing);
-        emit Transfer(sender, recipient, s.tTransferAmount);
+                _takeLiquidity(s.rLiquidity,s.tLiquidity);
+                emit Transfer(sender, address(this), s.tLiquidity + s.tMarketing);
+            }
+            if(s.rMarketing > 0 || s.tMarketing > 0) _takeMarketing(s.rMarketing, s.tMarketing);
+            emit Transfer(sender, recipient, s.tTransferAmount);
         
     }
 
